@@ -1,5 +1,5 @@
 use crate::net::unix::UnixStream;
-use crate::net::util::IoSource;
+use crate::net::util::IoResource;
 
 use futures_core::ready;
 use futures_util::future::poll_fn;
@@ -14,7 +14,7 @@ use std::task::{Context, Poll};
 
 /// A Unix socket which can accept connections from other Unix sockets.
 pub struct UnixListener {
-    io: IoSource<mio::net::UnixListener>,
+    io: IoResource<mio::net::UnixListener>,
 }
 
 impl UnixListener {
@@ -24,7 +24,7 @@ impl UnixListener {
         P: AsRef<Path>,
     {
         let listener = mio::net::UnixListener::bind(path)?;
-        let io = IoSource::new(listener)?;
+        let io = IoResource::new(listener)?;
         Ok(UnixListener { io })
     }
 
@@ -35,7 +35,7 @@ impl UnixListener {
     /// specified by `handle` and is ready to perform I/O.
     pub fn from_std(listener: net::UnixListener) -> io::Result<UnixListener> {
         let listener = mio::net::UnixListener::from_std(listener);
-        let io = IoSource::new(listener)?;
+        let io = IoResource::new(listener)?;
         Ok(UnixListener { io })
     }
 
@@ -88,10 +88,10 @@ impl TryFrom<UnixListener> for mio::net::UnixListener {
 
     /// Consumes value, returning the mio I/O object.
     ///
-    /// See [`IoSource::into_inner`] for more details about
+    /// See [`IoResource::into_inner`] for more details about
     /// resource deregistration that happens during the call.
     ///
-    /// [`IoSource::into_inner`]: crate::util::PollEvented::into_inner
+    /// [`IoResource::into_inner`]: crate::util::PollEvented::into_inner
     fn try_from(value: UnixListener) -> Result<Self, Self::Error> {
         value.io.into_inner()
     }

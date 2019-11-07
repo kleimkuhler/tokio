@@ -27,7 +27,7 @@ mod reap;
 use self::orphan::{OrphanQueue, OrphanQueueImpl, Wait};
 use self::reap::Reaper;
 use super::SpawnedChild;
-use crate::net::util::IoSource;
+use crate::net::util::IoResource;
 use crate::process::kill::Kill;
 use crate::signal::unix::{signal, Signal, SignalKind};
 use mio::event::Source;
@@ -186,11 +186,11 @@ where
     }
 }
 
-pub(crate) type ChildStdin = IoSource<Fd<process::ChildStdin>>;
-pub(crate) type ChildStdout = IoSource<Fd<process::ChildStdout>>;
-pub(crate) type ChildStderr = IoSource<Fd<process::ChildStderr>>;
+pub(crate) type ChildStdin = IoResource<Fd<process::ChildStdin>>;
+pub(crate) type ChildStdout = IoResource<Fd<process::ChildStdout>>;
+pub(crate) type ChildStderr = IoResource<Fd<process::ChildStderr>>;
 
-fn stdio<T>(option: Option<T>) -> io::Result<Option<IoSource<Fd<T>>>>
+fn stdio<T>(option: Option<T>) -> io::Result<Option<IoResource<Fd<T>>>>
 where
     T: AsRawFd,
 {
@@ -211,5 +211,5 @@ where
             return Err(io::Error::last_os_error());
         }
     }
-    Ok(Some(IoSource::new(Fd { inner: io })?))
+    Ok(Some(IoResource::new(Fd { inner: io })?))
 }

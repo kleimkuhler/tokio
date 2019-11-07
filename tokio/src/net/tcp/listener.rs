@@ -1,5 +1,5 @@
 use crate::net::tcp::{Incoming, TcpStream};
-use crate::net::util::IoSource;
+use crate::net::util::IoResource;
 use crate::net::ToSocketAddrs;
 
 use futures_core::ready;
@@ -34,7 +34,7 @@ use std::task::{Context, Poll};
 /// }
 /// ```
 pub struct TcpListener {
-    io: IoSource<mio::net::TcpListener>,
+    io: IoResource<mio::net::TcpListener>,
 }
 
 impl TcpListener {
@@ -185,12 +185,12 @@ impl TcpListener {
     /// ```
     pub fn from_std(listener: net::TcpListener) -> io::Result<TcpListener> {
         let io = mio::net::TcpListener::from_std(listener);
-        let io = IoSource::new(io)?;
+        let io = IoResource::new(io)?;
         Ok(TcpListener { io })
     }
 
     fn new(listener: mio::net::TcpListener) -> io::Result<TcpListener> {
-        let io = IoSource::new(listener)?;
+        let io = IoResource::new(listener)?;
         Ok(TcpListener { io })
     }
 
