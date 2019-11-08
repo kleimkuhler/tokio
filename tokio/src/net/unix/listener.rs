@@ -3,7 +3,6 @@ use crate::net::util::IoResource;
 
 use futures_core::ready;
 use futures_util::future::poll_fn;
-use mio;
 use std::convert::TryFrom;
 use std::fmt;
 use std::io;
