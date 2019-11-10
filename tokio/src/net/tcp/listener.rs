@@ -7,7 +7,7 @@ use futures_util::future::poll_fn;
 use std::convert::TryFrom;
 use std::fmt;
 use std::io;
-use std::net::{self, SocketAddr};
+use std::net::SocketAddr;
 use std::task::{Context, Poll};
 
 /// An I/O object representing a TCP socket listening for incoming connections.
