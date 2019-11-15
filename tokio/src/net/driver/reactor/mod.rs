@@ -357,7 +357,7 @@ impl Inner {
     /// Register an I/O resource with the reactor.
     ///
     /// The registration token is returned.
-    pub(super) fn add_source(&self, source: &dyn mio::event::Source) -> io::Result<usize> {
+    pub(super) fn add_source(&self, source: &mut dyn mio::event::Source) -> io::Result<usize> {
         let token = self.io_dispatch.alloc().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Other,
@@ -374,7 +374,7 @@ impl Inner {
     }
 
     /// Deregisters an I/O resource from the reactor.
-    pub(super) fn deregister_source(&self, source: &dyn mio::event::Source) -> io::Result<()> {
+    pub(super) fn deregister_source(&self, source: &mut dyn mio::event::Source) -> io::Result<()> {
         self.registry.deregister(source)
     }
 

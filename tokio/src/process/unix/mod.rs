@@ -171,16 +171,26 @@ impl<T> Source for Fd<T>
 where
     T: AsRawFd,
 {
-    fn register(&self, registry: &Registry, token: Token, interest: Interests) -> io::Result<()> {
-        SourceFd(&self.as_raw_fd()).register(registry, token, interest)
+    fn register(
+        &mut self,
+        registry: &Registry,
+        token: Token,
+        interest: Interests,
+    ) -> io::Result<()> {
+        SourceFd(&mut self.as_raw_fd()).register(registry, token, interest)
     }
 
-    fn reregister(&self, registry: &Registry, token: Token, interest: Interests) -> io::Result<()> {
-        SourceFd(&self.as_raw_fd()).reregister(registry, token, interest)
+    fn reregister(
+        &mut self,
+        registry: &Registry,
+        token: Token,
+        interest: Interests,
+    ) -> io::Result<()> {
+        SourceFd(&mut self.as_raw_fd()).reregister(registry, token, interest)
     }
 
-    fn deregister(&self, registry: &Registry) -> io::Result<()> {
-        SourceFd(&self.as_raw_fd()).deregister(registry)
+    fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
+        SourceFd(&mut self.as_raw_fd()).deregister(registry)
     }
 }
 
