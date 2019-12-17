@@ -73,9 +73,7 @@ async fn reunite_error() -> std::io::Result<()> {
 }
 
 #[tokio::test]
-async fn try_send_multiple() -> std::io::Result<()> {
-    use std::thread;
-
+async fn try_send_spawn() -> std::io::Result<()> {
     const MSG2: &[u8] = b"world!";
     const MSG2_LEN: usize = MSG2.len();
 
@@ -87,15 +85,20 @@ async fn try_send_multiple() -> std::io::Result<()> {
 
     let sent = &sender.try_send(MSG)?;
     assert_eq!(sent, &MSG_LEN);
+    let sent = &sender.try_send_to(MSG2, &receiver.local_addr()?).await?;
+    assert_eq!(sent, &MSG2_LEN);
 
-    thread::spawn(move || {
-        let sent = &sender.try_send(MSG2).unwrap();
-        assert_eq!(sent, &MSG2_LEN);
-    });
+    std::thread::spawn(move || {
+        let sent = &sender.try_send(MSG).unwrap();
+        assert_eq!(sent, &MSG_LEN);
+    })
+    .join()
+    .unwrap();
 
     let mut buf = [0u8; 32];
     let mut received = receiver.recv(&mut buf[..]).await?;
     received += receiver.recv(&mut buf[..]).await?;
-    assert_eq!(received, MSG_LEN + MSG2_LEN);
+    received += receiver.recv(&mut buf[..]).await?;
+    assert_eq!(received, MSG_LEN * 2 + MSG2_LEN);
     Ok(())
 }
