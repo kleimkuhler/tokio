@@ -20,6 +20,14 @@ cfg_uds! {
 
 impl UnixListener {
     /// Creates a new `UnixListener` bound to the specified path.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
     pub fn bind<P>(path: P) -> io::Result<UnixListener>
     where
         P: AsRef<Path>,
@@ -34,6 +42,14 @@ impl UnixListener {
     ///
     /// The returned listener will be associated with the given event loop
     /// specified by `handle` and is ready to perform I/O.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
     pub fn from_std(listener: net::UnixListener) -> io::Result<UnixListener> {
         let listener = mio::net::UnixListener::from_std(listener);
         let io = IoResource::new(listener)?;
@@ -41,7 +57,7 @@ impl UnixListener {
     }
 
     /// Returns the local socket address of this listener.
-    pub fn local_addr(&self) -> io::Result<mio::unix::SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<mio::net::SocketAddr> {
         self.io.get_ref().local_addr()
     }
 
@@ -51,14 +67,14 @@ impl UnixListener {
     }
 
     /// Accepts a new incoming connection to this listener.
-    pub async fn accept(&mut self) -> io::Result<(UnixStream, mio::unix::SocketAddr)> {
+    pub async fn accept(&mut self) -> io::Result<(UnixStream, mio::net::SocketAddr)> {
         poll_fn(|cx| self.poll_accept(cx)).await
     }
 
     pub(crate) fn poll_accept(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<io::Result<(UnixStream, mio::unix::SocketAddr)>> {
+    ) -> Poll<io::Result<(UnixStream, mio::net::SocketAddr)>> {
         ready!(self.io.poll_read_ready(cx))?;
 
         match self.io.get_ref().accept() {
@@ -92,8 +108,7 @@ impl UnixListener {
     ///
     /// ```no_run
     /// use tokio::net::UnixListener;
-    ///
-    /// use futures::StreamExt;
+    /// use tokio::stream::StreamExt;
     ///
     /// #[tokio::main]
     /// async fn main() {

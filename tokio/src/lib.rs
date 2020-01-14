@@ -1,4 +1,5 @@
-#![doc(html_root_url = "https://docs.rs/tokio/0.2.2")]
+#![doc(html_root_url = "https://docs.rs/tokio/0.2.9")]
+#![allow(clippy::cognitive_complexity, clippy::needless_doctest_main)]
 #![warn(
     missing_debug_implementations,
     missing_docs,
@@ -48,10 +49,6 @@
 //! section, we will take a brief tour of Tokio, summarizing the major APIs and
 //! their uses.
 //!
-//! Note that Tokio uses [Cargo feature flags][features] to allow users to
-//! control what features are present, so that unused code can be eliminated.
-//! This documentation also lists what feature flags are necessary to enable each API.
-//!
 //! The easiest way to get started is to enable all features. Do this by
 //! enabling the `full` feature flag:
 //!
@@ -59,7 +56,76 @@
 //! tokio = { version = "0.2", features = ["full"] }
 //! ```
 //!
-//! [features]: https://doc.rust-lang.org/cargo/reference/manifest.html#the-features-section
+//! ## Feature flags
+//!
+//! Tokio uses a set of [feature flags] to reduce the amount of compiled code. It
+//! is possible to just enable certain features over others. By default, Tokio
+//! does not enable any features but allows one to enable a subset for their use
+//! case. Below is a list of the available feature flags. You may also notice
+//! above each function, struct and trait there is a set of feature flags
+//! that are required for that item to be enabled. If you are new to Tokio it is
+//! recommended that you use the `full` feature flag which will enable everything.
+//! Beware though that this will pull in many extra dependencies that you may not
+//! need.
+//!
+//! - `full`: Enables all Tokio features and every API will be available.
+//! - `rt-core`: Enables `tokio::spawn` and the basic (single-threaded) scheduler.
+//! - `rt-threaded`: Enables the heavier, multi-threaded, work-stealing scheduler.
+//! - `rt-util`: Enables non-scheduler utilities.
+//! - `io-driver`: Enables the `mio` based IO driver.
+//! - `io-util`: Enables the IO based `Ext` traits.
+//! - `io-std`: Enable `Stdout`, `Stdin` and `Stderr` types.
+//! - `net`: Enables `tokio::net` types such as `TcpStream`, `UnixStream` and `UdpSocket`.
+//! - `tcp`: Enables all `tokio::net::tcp` types.
+//! - `udp`: Enables all `tokio::net::udp` types.
+//! - `uds`: Enables all `tokio::net::unix` types.
+//! - `time`: Enables `tokio::time` types and allows the schedulers to enable
+//! the built in timer.
+//! - `process`: Enables `tokio::process` types.
+//! - `macros`: Enables `#[tokio::main]` and `#[tokio::test]` macros.
+//! - `sync`: Enables all `tokio::sync` types.
+//! - `stream`: Enables optional `Stream` implementations for types within Tokio.
+//! - `signal`: Enables all `tokio::signal` types.
+//! - `fs`: Enables `tokio::fs` types.
+//! - `dns`: Enables async `tokio::net::ToSocketAddrs`.
+//! - `test-util`: Enables testing based infrastructure for the Tokio runtime.
+//! - `blocking`: Enables `block_in_place` and `spawn_blocking`.
+//!
+//! _Note: `AsyncRead` and `AsyncWrite` do not require any features and are
+//! enabled by default._
+//!
+//! [feature flags]: https://doc.rust-lang.org/cargo/reference/manifest.html#the-features-section
+//!
+//! ### Authoring applications
+//!
+//! Tokio is great for writing applications and most users in this case shouldn't
+//! worry to much about what features they should pick. If you're unsure, we suggest
+//! going with `full` to ensure that you don't run into any road blocks while you're
+//! building your application.
+//!
+//! #### Example
+//!
+//! This example shows the quickest way to get started with Tokio.
+//!
+//! ```toml
+//! tokio = { version = "0.2", features = ["full"] }
+//! ```
+//!
+//! ### Authoring libraries
+//!
+//! As a library author your goal should be to provide the lighest weight crate
+//! that is based on Tokio. To achieve this you should ensure that you only enable
+//! the features you need. This allows users to pick up your crate without having
+//! to enable unnecessary features.
+//!
+//! #### Example
+//!
+//! This example shows how you may want to import features for a library that just
+//! needs to `tokio::spawn` and use a `TcpStream`.
+//!
+//! ```toml
+//! tokio = { version = "0.2", features = ["rt-core", "tcp"] }
+//! ```
 //!
 //! ## Working With Tasks
 //!
@@ -82,7 +148,7 @@
 //! [blocking]: task/index.html#blocking-and-yielding
 //!
 //! The [`tokio::sync`] module contains synchronization primitives to use when
-//! need to communicate or share data. These include:
+//! needing to communicate or share data. These include:
 //!
 //! * channels ([`oneshot`], [`mpsc`], and [`watch`]), for sending values
 //!   between tasks,
@@ -196,14 +262,14 @@
 //!                     Ok(n) if n == 0 => return,
 //!                     Ok(n) => n,
 //!                     Err(e) => {
-//!                         println!("failed to read from socket; err = {:?}", e);
+//!                         eprintln!("failed to read from socket; err = {:?}", e);
 //!                         return;
 //!                     }
 //!                 };
 //!
 //!                 // Write the data back
 //!                 if let Err(e) = socket.write_all(&buf[0..n]).await {
-//!                     println!("failed to write to socket; err = {:?}", e);
+//!                     eprintln!("failed to write to socket; err = {:?}", e);
 //!                     return;
 //!                 }
 //!             }
@@ -240,6 +306,10 @@ cfg_signal! {
     pub mod signal;
 }
 
+cfg_stream! {
+    pub mod stream;
+}
+
 cfg_sync! {
     pub mod sync;
 }
@@ -259,9 +329,19 @@ cfg_time! {
 mod util;
 
 cfg_macros! {
-    #[cfg(not(test))] // Work around for rust-lang/rust#62127
-    pub use tokio_macros::main;
-    pub use tokio_macros::test;
+    doc_rt_core! {
+        cfg_rt_threaded! {
+            #[cfg(not(test))] // Work around for rust-lang/rust#62127
+            pub use tokio_macros::main_threaded as main;
+            pub use tokio_macros::test_threaded as test;
+        }
+
+        cfg_not_rt_threaded! {
+            #[cfg(not(test))] // Work around for rust-lang/rust#62127
+            pub use tokio_macros::main_basic as main;
+            pub use tokio_macros::test_basic as test;
+        }
+    }
 }
 
 // Tests

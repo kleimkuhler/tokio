@@ -117,7 +117,7 @@ pub mod error {
         }
     }
 
-    impl<T: fmt::Debug> ::std::error::Error for SendError<T> {}
+    impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 }
 
 #[derive(Debug)]
@@ -268,7 +268,7 @@ impl<T: Clone> Receiver<T> {
 }
 
 #[cfg(feature = "stream")]
-impl<T: Clone> futures_core::Stream for Receiver<T> {
+impl<T: Clone> crate::stream::Stream for Receiver<T> {
     type Item = T;
 
     fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {

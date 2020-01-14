@@ -54,7 +54,16 @@ impl Registration {
     ///
     /// - `Ok` if the registration happened successfully
     /// - `Err` if an error was encountered during registration
-    pub fn new<T>(io: &T) -> io::Result<Registration>
+    ///
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
+    pub fn new<T>(io: &mut T) -> io::Result<Registration>
     where
         T: event::Source,
     {
@@ -86,7 +95,7 @@ impl Registration {
     /// `Reactor::turn` that happen after a successful call to `deregister` will
     /// no longer result in notifications getting sent for this registration.
     /// - `Err` if an error is encountered.
-    pub fn deregister<T>(&mut self, io: &T) -> io::Result<()>
+    pub fn deregister<T>(&mut self, io: &mut T) -> io::Result<()>
     where
         T: event::Source,
     {

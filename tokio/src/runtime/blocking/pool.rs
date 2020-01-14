@@ -2,13 +2,12 @@
 
 use crate::loom::sync::{Arc, Condvar, Mutex};
 use crate::loom::thread;
-use crate::runtime::{self, io, time, Builder, Callback};
-use crate::runtime::blocking::shutdown;
 use crate::runtime::blocking::schedule::NoopSchedule;
+use crate::runtime::blocking::shutdown;
 use crate::runtime::blocking::task::BlockingTask;
+use crate::runtime::{Builder, Callback, Handle};
 use crate::task::{self, JoinHandle};
 
-use std::cell::Cell;
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::Duration;
@@ -42,23 +41,12 @@ struct Inner {
     /// Call before a thread stops
     before_stop: Option<Callback>,
 
-    /// Spawns async tasks
-    spawner: runtime::Spawner,
-
-    /// Runtime I/O driver handle
-    io_handle: io::Handle,
-
-    /// Runtime time driver handle
-    time_handle: time::Handle,
-
-    /// Source of `Instant::now()`
-    clock: time::Clock,
-
+    thread_cap: usize,
 }
 
 struct Shared {
     queue: VecDeque<Task>,
-    num_th: u32,
+    num_th: usize,
     num_idle: u32,
     num_notify: u32,
     shutdown: bool,
@@ -67,12 +55,6 @@ struct Shared {
 
 type Task = task::Task<NoopSchedule>;
 
-thread_local! {
-    /// Thread-local tracking the current executor
-    static BLOCKING: Cell<Option<*const Spawner>> = Cell::new(None)
-}
-
-const MAX_THREADS: u32 = 1_000;
 const KEEP_ALIVE: Duration = Duration::from_secs(10);
 
 /// Run the provided function on an executor dedicated to blocking operations.
@@ -80,28 +62,17 @@ pub(crate) fn spawn_blocking<F, R>(func: F) -> JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
 {
-    BLOCKING.with(|cell| {
-        let schedule = match cell.get() {
-            Some(ptr) => unsafe { &*ptr },
-            None => panic!("not currently running on the Tokio runtime."),
-        };
+    let rt = Handle::current();
 
-        let (task, handle) = task::joinable(BlockingTask::new(func));
-        schedule.schedule(task);
-        handle
-    })
+    let (task, handle) = task::joinable(BlockingTask::new(func));
+    rt.blocking_spawner.spawn(task, &rt);
+    handle
 }
 
 // ===== impl BlockingPool =====
 
 impl BlockingPool {
-    pub(crate) fn new(
-        builder: &Builder,
-        spawner: &runtime::Spawner,
-        io: &io::Handle,
-        time: &time::Handle,
-        clock: &time::Clock,
-    ) -> BlockingPool {
+    pub(crate) fn new(builder: &Builder, thread_cap: usize) -> BlockingPool {
         let (shutdown_tx, shutdown_rx) = shutdown::channel();
 
         BlockingPool {
@@ -120,10 +91,7 @@ impl BlockingPool {
                     stack_size: builder.thread_stack_size,
                     after_start: builder.after_start.clone(),
                     before_stop: builder.before_stop.clone(),
-                    spawner: spawner.clone(),
-                    io_handle: io.clone(),
-                    time_handle: time.clone(),
-                    clock: clock.clone(),
+                    thread_cap,
                 }),
             },
             shutdown_rx,
@@ -158,41 +126,7 @@ impl fmt::Debug for BlockingPool {
 // ===== impl Spawner =====
 
 impl Spawner {
-    /// Set the blocking pool for the duration of the closure
-    ///
-    /// If a blocking pool is already set, it will be restored when the closure
-    /// returns or if it panics.
-    pub(crate) fn enter<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        // While scary, this is safe. The function takes a `&BlockingPool`,
-        // which guarantees that the reference lives for the duration of
-        // `with_pool`.
-        //
-        // Because we are always clearing the TLS value at the end of the
-        // function, we can cast the reference to 'static which thread-local
-        // cells require.
-        BLOCKING.with(|cell| {
-            let was = cell.replace(None);
-
-            // Ensure that the pool is removed from the thread-local context
-            // when leaving the scope. This handles cases that involve panicking.
-            struct Reset<'a>(&'a Cell<Option<*const Spawner>>, Option<*const Spawner>);
-
-            impl Drop for Reset<'_> {
-                fn drop(&mut self) {
-                    self.0.set(self.1);
-                }
-            }
-
-            let _reset = Reset(cell, was);
-            cell.set(Some(self as *const Spawner));
-            f()
-        })
-    }
-
-    fn schedule(&self, task: Task) {
+    fn spawn(&self, task: Task, rt: &Handle) {
         let shutdown_tx = {
             let mut shared = self.inner.shared.lock().unwrap();
 
@@ -209,7 +143,7 @@ impl Spawner {
             if shared.num_idle == 0 {
                 // No threads are able to process the task.
 
-                if shared.num_th == MAX_THREADS {
+                if shared.num_th == self.inner.thread_cap {
                     // At max number of threads
                     None
                 } else {
@@ -231,28 +165,27 @@ impl Spawner {
         };
 
         if let Some(shutdown_tx) = shutdown_tx {
-            self.spawn_thread(shutdown_tx);
+            self.spawn_thread(shutdown_tx, rt);
         }
     }
 
-    fn spawn_thread(&self, shutdown_tx: shutdown::Sender) {
+    fn spawn_thread(&self, shutdown_tx: shutdown::Sender, rt: &Handle) {
         let mut builder = thread::Builder::new().name(self.inner.thread_name.clone());
 
         if let Some(stack_size) = self.inner.stack_size {
             builder = builder.stack_size(stack_size);
         }
 
-        let inner = self.inner.clone();
+        let rt = rt.clone();
 
         builder
             .spawn(move || {
-                inner.run();
-
-                // Make sure `inner` drops first to ensure that the shutdown_rx
-                // sees all refs to `Inner` are dropped when the `shutdown_rx`
-                // resolves.
-                drop(inner);
-                drop(shutdown_tx);
+                // Only the reference should be moved into the closure
+                let rt = &rt;
+                rt.enter(move || {
+                    rt.blocking_spawner.inner.run();
+                    drop(shutdown_tx);
+                })
             })
             .unwrap();
     }
@@ -260,14 +193,6 @@ impl Spawner {
 
 impl Inner {
     fn run(&self) {
-        let _io = io::set_default(&self.io_handle);
-
-        time::with_default(&self.time_handle, &self.clock, || {
-            self.spawner.enter(|| self.run2());
-        });
-    }
-
-    fn run2(&self) {
         if let Some(f) = &self.after_start {
             f()
         }
@@ -303,7 +228,9 @@ impl Inner {
                     break;
                 }
 
-                if timeout_result.timed_out() {
+                // Even if the condvar "timed out", if the pool is entering the
+                // shutdown phase, we want to perform the cleanup logic.
+                if !shared.shutdown && timeout_result.timed_out() {
                     break 'main;
                 }
 
@@ -311,6 +238,14 @@ impl Inner {
             }
 
             if shared.shutdown {
+                // Drain the queue
+                while let Some(task) = shared.queue.pop_front() {
+                    drop(shared);
+                    task.shutdown();
+
+                    shared = self.shared.lock().unwrap();
+                }
+
                 // Work was produced, and we "took" it (by decrementing num_notify).
                 // This means that num_idle was decremented once for our wakeup.
                 // But, since we are exiting, we need to "undo" that, as we'll stay idle.

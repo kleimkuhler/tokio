@@ -160,8 +160,8 @@ where
     S: mio::event::Source,
 {
     /// Creates a new `IoResource` associated with the default reactor.
-    pub fn new(io: S) -> io::Result<Self> {
-        let registration = Registration::new(&io)?;
+    pub fn new(mut io: S) -> io::Result<Self> {
+        let registration = Registration::new(&mut io)?;
         Ok(Self {
             io: Some(io),
             registration,
@@ -192,8 +192,8 @@ where
     /// registered with a different reactor. Some I/O resource types can only
     /// be associated with a single reactor instance for their lifetime.
     pub fn into_inner(mut self) -> io::Result<S> {
-        let io = self.io.take().unwrap();
-        self.registration.deregister(&io)?;
+        let mut io = self.io.take().unwrap();
+        self.registration.deregister(&mut io)?;
         Ok(io)
     }
 
@@ -373,9 +373,9 @@ impl<S: mio::event::Source + fmt::Debug> fmt::Debug for IoResource<S> {
 
 impl<S: mio::event::Source> Drop for IoResource<S> {
     fn drop(&mut self) {
-        if let Some(io) = self.io.take() {
+        if let Some(mut io) = self.io.take() {
             // Ignore errors
-            let _ = self.registration.deregister(&io);
+            let _ = self.registration.deregister(&mut io);
         }
     }
 }

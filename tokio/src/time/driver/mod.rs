@@ -4,10 +4,10 @@ mod atomic_stack;
 use self::atomic_stack::AtomicStack;
 
 mod entry;
-use self::entry::Entry;
+pub(super) use self::entry::Entry;
 
 mod handle;
-pub(crate) use self::handle::{set_default, Handle, HandlePriv};
+pub(crate) use self::handle::Handle;
 
 mod registration;
 pub(crate) use self::registration::Registration;
@@ -70,19 +70,11 @@ use std::{cmp, fmt};
 /// * Level 5: 64 x ~12 day slots.
 ///
 /// When the timer processes entries at level zero, it will notify all the
-/// [`Delay`] instances as their deadlines have been reached. For all higher
+/// `Delay` instances as their deadlines have been reached. For all higher
 /// levels, all entries will be redistributed across the wheel at the next level
 /// down. Eventually, as time progresses, entries will [`Delay`] instances will
 /// either be canceled (dropped) or their associated entries will reach level
 /// zero and be notified.
-///
-/// [`Delay`]: struct.Delay.html
-/// [`Interval`]: struct.Interval.html
-/// [`Timeout`]: struct.Timeout.html
-/// [paper]: http://www.cs.columbia.edu/~nahum/w6998/papers/ton97-timing-wheels.pdf
-/// [`handle`]: #method.handle
-/// [`turn`]: #method.turn
-/// [Handle.struct]: struct.Handle.html
 #[derive(Debug)]
 pub(crate) struct Driver<T> {
     /// Shared state
@@ -253,7 +245,14 @@ where
                 let deadline = self.expiration_instant(when);
 
                 if deadline > now {
-                    self.park.park_timeout(deadline - now)?;
+                    let dur = deadline - now;
+
+                    if self.clock.is_frozen() {
+                        self.park.park_timeout(Duration::from_secs(0))?;
+                        self.clock.advance(dur);
+                    } else {
+                        self.park.park_timeout(dur)?;
+                    }
                 } else {
                     self.park.park_timeout(Duration::from_secs(0))?;
                 }
@@ -277,7 +276,14 @@ where
                 let deadline = self.expiration_instant(when);
 
                 if deadline > now {
-                    self.park.park_timeout(cmp::min(deadline - now, duration))?;
+                    let duration = cmp::min(deadline - now, duration);
+
+                    if self.clock.is_frozen() {
+                        self.park.park_timeout(Duration::from_secs(0))?;
+                        self.clock.advance(duration);
+                    } else {
+                        self.park.park_timeout(duration)?;
+                    }
                 } else {
                     self.park.park_timeout(Duration::from_secs(0))?;
                 }

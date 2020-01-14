@@ -12,6 +12,7 @@ use crate::sync::mpsc::{channel, Receiver};
 use libc::c_int;
 use mio::net::UnixStream;
 use std::io::{self, Error, ErrorKind, Write};
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
@@ -285,7 +286,12 @@ impl Driver {
         // Unfortunately we cannot just use a single global IoResource instance
         // either, since we can't compare Handles or assume they will always
         // point to the exact same reactor.
-        let stream = globals().receiver.try_clone()?;
+        let fd = globals().receiver.as_raw_fd();
+        let stream = unsafe {
+            let dup = libc::dup(fd);
+            UnixStream::from_raw_fd(dup)
+        };
+        // let stream = globals().receiver.try_clone()?;
         let wakeup = IoResource::new(stream)?;
 
         Ok(Driver { wakeup })
@@ -294,9 +300,11 @@ impl Driver {
     /// Drain all data in the global receiver, ensuring we'll get woken up when
     /// there is a write on the other end.
     ///
-    /// We do *NOT* use the existence of any read bytes as evidence a sigal was
+    /// We do *NOT* use the existence of any read bytes as evidence a signal was
     /// received since the `pending` flags would have already been set if that
-    /// was the case. See #38 for more info.
+    /// was the case. See
+    /// [#38](https://github.com/alexcrichton/tokio-signal/issues/38) for more
+    /// info.
     fn drain(&mut self, cx: &mut Context<'_>) {
         loop {
             match Pin::new(&mut self.wakeup).poll_read(cx, &mut [0; 128]) {
@@ -482,7 +490,7 @@ impl Signal {
 }
 
 cfg_stream! {
-    impl futures_core::Stream for Signal {
+    impl crate::stream::Stream for Signal {
         type Item = ();
 
         fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<()>> {

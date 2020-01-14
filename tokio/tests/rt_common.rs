@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop)]
 #![warn(rust_2018_idioms)]
 #![cfg(feature = "full")]
 
@@ -40,7 +41,7 @@ fn send_sync_bound() {
 }
 
 rt_test! {
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::{TcpListener, TcpStream, UdpSocket};
     use tokio::prelude::*;
     use tokio::runtime::Runtime;
     use tokio::sync::oneshot;
@@ -396,6 +397,21 @@ rt_test! {
     }
 
     #[test]
+    fn spawn_blocking_from_blocking() {
+        let mut rt = rt();
+
+        let out = rt.block_on(async move {
+            let inner = assert_ok!(tokio::task::spawn_blocking(|| {
+                tokio::task::spawn_blocking(|| "hello")
+            }).await);
+
+            assert_ok!(inner.await)
+        });
+
+        assert_eq!(out, "hello")
+    }
+
+    #[test]
     fn delay_from_blocking() {
         let mut rt = rt();
 
@@ -519,7 +535,7 @@ rt_test! {
 
         impl Drop for Boom {
             fn drop(&mut self) {
-                assert!(::std::thread::panicking());
+                assert!(std::thread::panicking());
                 self.0.take().unwrap().send(()).unwrap();
             }
         }
@@ -599,6 +615,116 @@ rt_test! {
         drop(rt);
 
         assert_ok!(drop_rx.recv());
+    }
+
+    #[test]
+    fn wake_while_rt_is_dropping() {
+        use tokio::task;
+
+        struct OnDrop<F: FnMut()>(F);
+
+        impl<F: FnMut()> Drop for OnDrop<F> {
+            fn drop(&mut self) {
+                (self.0)()
+            }
+        }
+
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+        let (tx3, rx3) = oneshot::channel();
+
+        let mut rt = rt();
+
+        let h1 = rt.handle().clone();
+
+        rt.handle().spawn(async move {
+            // Ensure a waker gets stored in oneshot 1.
+            let _ = rx1.await;
+            tx3.send(()).unwrap();
+        });
+
+        rt.handle().spawn(async move {
+            // When this task is dropped, we'll be "closing remotes".
+            // We spawn a new task that owns the `tx1`, to move its Drop
+            // out of here.
+            //
+            // Importantly, the oneshot 1 has a waker already stored, so
+            // the eventual drop here will try to re-schedule again.
+            let mut opt_tx1 = Some(tx1);
+            let _d = OnDrop(move || {
+                let tx1 = opt_tx1.take().unwrap();
+                h1.spawn(async move {
+                    tx1.send(()).unwrap();
+                });
+            });
+            let _ = rx2.await;
+        });
+
+        rt.handle().spawn(async move {
+            let _ = rx3.await;
+            // We'll never get here, but once task 3 drops, this will
+            // force task 2 to re-schedule since it's waiting on oneshot 2.
+            tx2.send(()).unwrap();
+        });
+
+        // Tick the loop
+        rt.block_on(async {
+            task::yield_now().await;
+        });
+
+        // Drop the rt
+        drop(rt);
+    }
+
+    #[test]
+    fn io_notify_while_shutting_down() {
+        use std::net::Ipv6Addr;
+
+        for _ in 1..100 {
+            let mut runtime = rt();
+
+            runtime.block_on(async {
+                let socket = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).await.unwrap();
+                let addr = socket.local_addr().unwrap();
+                let (mut recv_half, mut send_half) = socket.split();
+
+                tokio::spawn(async move {
+                    let mut buf = [0];
+                    loop {
+                        recv_half.recv_from(&mut buf).await.unwrap();
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                });
+
+                tokio::spawn(async move {
+                    let buf = [0];
+                    loop {
+                        send_half.send_to(&buf, &addr).await.unwrap();
+                        tokio::time::delay_for(Duration::from_millis(1)).await;
+                    }
+                });
+
+                tokio::time::delay_for(Duration::from_millis(5)).await;
+            });
+        }
+    }
+
+    #[test]
+    fn runtime_in_thread_local() {
+        use std::cell::RefCell;
+        use std::thread;
+
+        thread_local!(
+            static R: RefCell<Option<Runtime>> = RefCell::new(None);
+        );
+
+        thread::spawn(|| {
+            R.with(|cell| {
+                *cell.borrow_mut() = Some(rt());
+            });
+
+            let _rt = rt();
+        }).join().unwrap();
     }
 
     async fn client_server(tx: mpsc::Sender<()>) {

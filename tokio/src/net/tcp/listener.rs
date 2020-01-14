@@ -18,7 +18,11 @@ cfg_tcp! {
     /// use tokio::net::TcpListener;
     ///
     /// use std::io;
-    /// # async fn process_socket<T>(_socket: T) {}
+    ///
+    /// async fn process_socket<T>(socket: T) {
+    ///     # drop(socket);
+    ///     // do work with socket here
+    /// }
     ///
     /// #[tokio::main]
     /// async fn main() -> io::Result<()> {
@@ -182,6 +186,14 @@ impl TcpListener {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
     pub fn from_std(listener: std::net::TcpListener) -> io::Result<TcpListener> {
         let io = mio::net::TcpListener::from_std(listener);
         let io = IoResource::new(io)?;
@@ -237,9 +249,7 @@ impl TcpListener {
     /// # Examples
     ///
     /// ```no_run
-    /// use tokio::net::TcpListener;
-    ///
-    /// use futures::StreamExt;
+    /// use tokio::{net::TcpListener, stream::StreamExt};
     ///
     /// #[tokio::main]
     /// async fn main() {

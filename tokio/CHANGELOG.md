@@ -1,3 +1,96 @@
+# 0.2.9 (January 9, 2019)
+
+### Fixes
+- `AsyncSeek` impl for `File` (#1986).
+- rt: shutdown deadlock in `threaded_scheduler` (#2074, #2082).
+- rt: memory ordering when dropping `JoinHandle` (#2044).
+- docs: misc API documentation fixes and improvements.
+
+# 0.2.8 (January 7, 2019)
+
+### Fixes
+- depend on new version of `tokio-macros`.
+
+# 0.2.7 (January 7, 2019)
+
+### Fixes
+- potential deadlock when dropping `basic_scheduler` Runtime.
+- calling `spawn_blocking` from within a `spawn_blocking` (#2006).
+- storing a `Runtime` instance in a thread-local (#2011).
+- miscellaneous documentation fixes.
+- rt: fix `Waker::will_wake` to return true when tasks match (#2045).
+- test-util: `time::advance` runs pending tasks before changing the time (#2059).
+
+### Added
+- `net::lookup_host` maps a `T: ToSocketAddrs` to a stream of `SocketAddrs` (#1870).
+- `process::Child` fields are made public to match `std` (#2014).
+- impl `Stream` for `sync::broadcast::Receiver` (#2012).
+- `sync::RwLock` provides an asynchonous read-write lock (#1699).
+- `runtime::Handle::current` returns the handle for the current runtime (#2040).
+- `StreamExt::filter` filters stream values according to a predicate (#2001).
+- `StreamExt::filter_map` simultaneously filter and map stream values (#2001).
+- `StreamExt::try_next` convenience for streams of `Result<T, E>` (#2005).
+- `StreamExt::take` limits a stream to a specified number of values (#2025).
+- `StreamExt::take_while` limits a stream based on a predicate (#2029).
+- `StreamExt::all` tests if every element of the stream matches a predicate (#2035).
+- `StreamExt::any` tests if any element of the stream matches a predicate (#2034).
+- `task::LocalSet.await` runs spawned tasks until the set is idle (#1971).
+- `time::DelayQueue::len` returns the number entries in the queue (#1755).
+- expose runtime options from the `#[tokio::main]` and `#[tokio::test]` (#2022).
+
+# 0.2.6 (December 19, 2019)
+
+### Fixes
+- `fs::File::seek` API regression (#1991).
+
+# 0.2.5 (December 18, 2019)
+
+### Added
+- `io::AsyncSeek` trait (#1924).
+- `Mutex::try_lock` (#1939)
+- `mpsc::Receiver::try_recv` and `mpsc::UnboundedReceiver::try_recv` (#1939).
+- `writev` support for `TcpStream` (#1956).
+- `time::throttle` for throttling streams (#1949).
+- implement `Stream` for `time::DelayQueue` (#1975).
+- `sync::broadcast` provides a fan-out channel (#1943).
+- `sync::Semaphore` provides an async semaphore (#1973).
+- `stream::StreamExt` provides stream utilities (#1962).
+
+### Fixes
+- deadlock risk while shutting down the runtime (#1972).
+- panic while shutting down the runtime (#1978).
+- `sync::MutexGuard` debug output (#1961).
+- misc doc improvements (#1933, #1934, #1940, #1942).
+
+### Changes
+- runtime threads are configured with `runtime::Builder::core_threads` and
+  `runtime::Builder::max_threads`. `runtime::Builder::num_threads` is
+  deprecated (#1977).
+
+# 0.2.4 (December 6, 2019)
+
+### Fixes
+- `sync::Mutex` deadlock when `lock()` future is dropped early (#1898).
+
+# 0.2.3 (December 6, 2019)
+
+### Added
+- read / write integers using `AsyncReadExt` and `AsyncWriteExt` (#1863).
+- `read_buf` / `write_buf` for reading / writing `Buf` / `BufMut` (#1881).
+- `TcpStream::poll_peek` - pollable API for performing TCP peek (#1864).
+- `sync::oneshot::error::TryRecvError` provides variants to detect the error
+  kind (#1874).
+- `LocalSet::block_on` accepts `!'static` task (#1882).
+- `task::JoinError` is now `Sync` (#1888).
+- impl conversions between `tokio::time::Instant` and
+  `std::time::Instant` (#1904).
+
+### Fixes
+- calling `spawn_blocking` after runtime shutdown (#1875).
+- `LocalSet` drop inifinite loop (#1892).
+- `LocalSet` hang under load (#1905).
+- improved documentation (#1865, #1866, #1868, #1874, #1876, #1911).
+
 # 0.2.2 (November 29, 2019)
 
 ### Fixes

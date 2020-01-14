@@ -2,7 +2,7 @@ use crate::loom::cell::CausalCell;
 use crate::loom::future::AtomicWaker;
 use crate::loom::sync::atomic::AtomicUsize;
 use crate::loom::sync::Arc;
-use crate::sync::mpsc::error::ClosedError;
+use crate::sync::mpsc::error::{ClosedError, TryRecvError};
 use crate::sync::mpsc::{error, list};
 
 use std::fmt;
@@ -306,6 +306,22 @@ where
             }
         })
     }
+
+    /// Receive the next value without blocking
+    pub(crate) fn try_recv(&mut self) -> Result<T, TryRecvError> {
+        use super::block::Read::*;
+        self.inner.rx_fields.with_mut(|rx_fields_ptr| {
+            let rx_fields = unsafe { &mut *rx_fields_ptr };
+            match rx_fields.list.pop(&self.inner.tx) {
+                Some(Value(value)) => {
+                    self.inner.semaphore.add_permit();
+                    Ok(value)
+                }
+                Some(Closed) => Err(TryRecvError::Closed),
+                None => Err(TryRecvError::Empty),
+            }
+        })
+    }
 }
 
 impl<T, S> Drop for Rx<T, S>
@@ -366,7 +382,7 @@ impl<T, S> Drop for Chan<T, S> {
     }
 }
 
-use crate::sync::semaphore::TryAcquireError;
+use crate::sync::semaphore_ll::TryAcquireError;
 
 impl From<TryAcquireError> for TrySendError {
     fn from(src: TryAcquireError) -> TrySendError {
@@ -382,9 +398,9 @@ impl From<TryAcquireError> for TrySendError {
 
 // ===== impl Semaphore for (::Semaphore, capacity) =====
 
-use crate::sync::semaphore::Permit;
+use crate::sync::semaphore_ll::Permit;
 
-impl Semaphore for (crate::sync::semaphore::Semaphore, usize) {
+impl Semaphore for (crate::sync::semaphore_ll::Semaphore, usize) {
     type Permit = Permit;
 
     fn new_permit() -> Permit {
@@ -392,7 +408,7 @@ impl Semaphore for (crate::sync::semaphore::Semaphore, usize) {
     }
 
     fn drop_permit(&self, permit: &mut Permit) {
-        permit.release(&self.0);
+        permit.release(1, &self.0);
     }
 
     fn add_permit(&self) {
@@ -409,17 +425,17 @@ impl Semaphore for (crate::sync::semaphore::Semaphore, usize) {
         permit: &mut Permit,
     ) -> Poll<Result<(), ClosedError>> {
         permit
-            .poll_acquire(cx, &self.0)
+            .poll_acquire(cx, 1, &self.0)
             .map_err(|_| ClosedError::new())
     }
 
     fn try_acquire(&self, permit: &mut Permit) -> Result<(), TrySendError> {
-        permit.try_acquire(&self.0)?;
+        permit.try_acquire(1, &self.0)?;
         Ok(())
     }
 
     fn forget(&self, permit: &mut Self::Permit) {
-        permit.forget()
+        permit.forget(1);
     }
 
     fn close(&self) {

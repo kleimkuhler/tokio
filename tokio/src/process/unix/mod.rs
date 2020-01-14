@@ -34,7 +34,7 @@ use crate::signal::unix::{signal, Signal, SignalKind};
 
 use mio::event::Source;
 use mio::unix::SourceFd;
-use mio::{Interests, Registry, Token};
+use mio::{Interest, Registry, Token};
 use std::fmt;
 use std::future::Future;
 use std::io;
@@ -173,15 +173,25 @@ impl<T> Source for Fd<T>
 where
     T: AsRawFd,
 {
-    fn register(&self, registry: &Registry, token: Token, interest: Interests) -> io::Result<()> {
+    fn register(
+        &mut self,
+        registry: &Registry,
+        token: Token,
+        interest: Interest,
+    ) -> io::Result<()> {
         SourceFd(&self.as_raw_fd()).register(registry, token, interest)
     }
 
-    fn reregister(&self, registry: &Registry, token: Token, interest: Interests) -> io::Result<()> {
+    fn reregister(
+        &mut self,
+        registry: &Registry,
+        token: Token,
+        interest: Interest,
+    ) -> io::Result<()> {
         SourceFd(&self.as_raw_fd()).reregister(registry, token, interest)
     }
 
-    fn deregister(&self, registry: &Registry) -> io::Result<()> {
+    fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
         SourceFd(&self.as_raw_fd()).deregister(registry)
     }
 }

@@ -3,14 +3,13 @@ pub(crate) use scheduled_io::ScheduledIo; // pub(crate) for tests
 
 use crate::loom::sync::atomic::AtomicUsize;
 use crate::park::{Park, Unpark};
+use crate::runtime::context;
 use crate::util::slab::{Address, Slab};
 
 use super::Readiness;
 use mio;
-use std::cell::RefCell;
 use std::fmt;
 use std::io;
-use std::marker::PhantomData;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Weak};
 use std::task::Waker;
@@ -56,11 +55,6 @@ pub(super) enum Direction {
     Write,
 }
 
-thread_local! {
-    /// Tracks the reactor for the current execution context.
-    static CURRENT_REACTOR: RefCell<Option<Handle>> = RefCell::new(None)
-}
-
 const TOKEN_WAKEUP: mio::Token = mio::Token(Address::NULL);
 
 fn _assert_kinds() {
@@ -70,40 +64,6 @@ fn _assert_kinds() {
 }
 
 // ===== impl Driver =====
-
-#[derive(Debug)]
-/// Guard that resets current reactor on drop.
-pub(crate) struct DefaultGuard<'a> {
-    _lifetime: PhantomData<&'a u8>,
-}
-
-impl Drop for DefaultGuard<'_> {
-    fn drop(&mut self) {
-        CURRENT_REACTOR.with(|current| {
-            let mut current = current.borrow_mut();
-            *current = None;
-        });
-    }
-}
-
-/// Sets handle for a default reactor, returning guard that unsets it on drop.
-pub(crate) fn set_default(handle: &Handle) -> DefaultGuard<'_> {
-    CURRENT_REACTOR.with(|current| {
-        let mut current = current.borrow_mut();
-
-        assert!(
-            current.is_none(),
-            "default Tokio reactor already set \
-             for execution context"
-        );
-
-        *current = Some(handle.clone());
-    });
-
-    DefaultGuard {
-        _lifetime: PhantomData,
-    }
-}
 
 impl Driver {
     /// Creates a new event loop, returning any error that happened during the
@@ -248,10 +208,7 @@ impl Handle {
     ///
     /// This function panics if there is no current reactor set.
     pub(super) fn current() -> Self {
-        CURRENT_REACTOR.with(|current| match *current.borrow() {
-            Some(ref handle) => handle.clone(),
-            None => panic!("no current reactor"),
-        })
+        context::io_handle().expect("no current reactor")
     }
 
     /// Forces a reactor blocked in a call to `turn` to wakeup, or otherwise
@@ -292,7 +249,7 @@ impl Inner {
     /// Register an I/O resource with the reactor.
     ///
     /// The registration token is returned.
-    pub(super) fn add_source(&self, source: &dyn mio::event::Source) -> io::Result<Address> {
+    pub(super) fn add_source(&self, source: &mut dyn mio::event::Source) -> io::Result<Address> {
         let address = self.io_dispatch.alloc().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Other,
@@ -304,13 +261,13 @@ impl Inner {
         self.registry.register(
             source,
             mio::Token(address.to_usize()),
-            mio::Interests::READABLE | mio::Interests::WRITABLE,
+            mio::Interest::READABLE | mio::Interest::WRITABLE,
         )?;
         Ok(address)
     }
 
     /// Deregisters an I/O resource from the reactor.
-    pub(super) fn deregister_source(&self, source: &dyn mio::event::Source) -> io::Result<()> {
+    pub(super) fn deregister_source(&self, source: &mut dyn mio::event::Source) -> io::Result<()> {
         self.registry.deregister(source)
     }
 

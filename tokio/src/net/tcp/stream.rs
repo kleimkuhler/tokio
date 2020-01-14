@@ -3,6 +3,7 @@ use crate::io::{AsyncRead, AsyncWrite, IoResource};
 use crate::net::tcp::split::{split, ReadHalf, WriteHalf};
 use crate::net::ToSocketAddrs;
 
+use bytes::Buf;
 use std::convert::TryFrom;
 use std::fmt;
 use std::io::{self, Read, Write};
@@ -136,6 +137,22 @@ impl TcpStream {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
     pub fn from_std(stream: net::TcpStream) -> io::Result<TcpStream> {
         let io = mio::net::TcpStream::from_std(stream);
         let io = IoResource::new(io)?;
@@ -416,7 +433,7 @@ impl TcpStream {
         }
     }
 
-    pub(crate) fn poll_write_priv(
+    pub(super) fn poll_write_priv(
         &self,
         cx: &mut Context<'_>,
         buf: &[u8],
@@ -429,6 +446,109 @@ impl TcpStream {
                 Poll::Pending
             }
             x => Poll::Ready(x),
+        }
+    }
+
+    pub(super) fn poll_write_buf_priv<B: Buf>(
+        &self,
+        cx: &mut Context<'_>,
+        buf: &mut B,
+    ) -> Poll<io::Result<usize>> {
+        use std::io::IoSlice;
+
+        ready!(self.io.poll_write_ready(cx))?;
+
+        // The `IoVec` (v0.1.x) type can't have a zero-length size, so create
+        // a dummy version from a 1-length slice which we'll overwrite with
+        // the `bytes_vectored` method.
+        static S: &[u8] = &[0];
+        const MAX_BUFS: usize = 64;
+
+        // IoSlice isn't Copy, so we must expand this manually ;_;
+        let mut slices: [IoSlice<'_>; MAX_BUFS] = [
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+            IoSlice::new(S),
+        ];
+        let cnt = buf.bytes_vectored(&mut slices);
+
+        // let iovec = <&IoVec>::from(S);
+        // let mut vecs = [iovec; MAX_BUFS];
+        // for i in 0..cnt {
+        //     vecs[i] = (*slices[i]).into();
+        // }
+
+        match self.io.get_ref().write_vectored(&slices[..cnt]) {
+            Ok(n) => {
+                buf.advance(n);
+                Poll::Ready(Ok(n))
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                self.io.clear_write_ready(cx)?;
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }
@@ -482,6 +602,14 @@ impl AsyncWrite for TcpStream {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         self.poll_write_priv(cx, buf)
+    }
+
+    fn poll_write_buf<B: Buf>(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut B,
+    ) -> Poll<io::Result<usize>> {
+        self.poll_write_buf_priv(cx, buf)
     }
 
     #[inline]

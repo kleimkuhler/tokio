@@ -4,7 +4,7 @@
 //! runtime support. In particular, the following runtime services are
 //! necessary:
 //!
-//! * An **I/O event loop**, called the [driver], which drives I/O resources and
+//! * An **I/O event loop**, called the driver, which drives I/O resources and
 //!   dispatches I/O events to tasks that depend on them.
 //! * A **scheduler** to execute [tasks] that use these I/O resources.
 //! * A **timer** for scheduling work to run after a set period of time.
@@ -148,7 +148,7 @@
 //! ```
 //!
 //! If the `rt-threaded` feature flag is enabled, [`Runtime::new`] will return a
-//! basic scheduler runtime by default.
+//! threaded scheduler runtime by default.
 //!
 //! Most applications should use the threaded scheduler, except in some niche
 //! use-cases, such as when running only a single thread is required.
@@ -161,14 +161,20 @@
 //! This is done with [`Builder::enable_io`] and [`Builder::enable_time`]. As a
 //! shorthand, [`Builder::enable_all`] enables both resource drivers.
 //!
+//! ## Lifetime of spawned threads
+//!
+//! The runtime may spawn threads depending on its configuration and usage. The
+//! threaded scheduler spawns threads to schedule tasks and calls to
+//! `spawn_blocking` spawn threads to run blocking operations.
+//!
+//! While the `Runtime` is active, threads may shutdown after periods of being
+//! idle. Once `Runtime` is dropped, all runtime threads are forcibly shutdown.
+//! Any tasks that have not yet completed will be dropped.
+//!
 //! [tasks]: crate::task
-//! [driver]: crate::io::driver
-//! [executor]: https://tokio.rs/docs/internals/runtime-model/#executors
-//! [`Runtime`]: struct.Runtime.html
-//! [`Reactor`]: ../reactor/struct.Reactor.html
-//! [`run`]: fn.run.html
-//! [`tokio::spawn`]: ../executor/fn.spawn.html
-//! [`tokio::main`]: ../../tokio_macros/attr.main.html
+//! [`Runtime`]: Runtime
+//! [`tokio::spawn`]: crate::spawn
+//! [`tokio::main`]: ../attr.main.html
 //! [runtime builder]: crate::runtime::Builder
 //! [`Runtime::new`]: crate::runtime::Runtime::new
 //! [`Builder::basic_scheduler`]: crate::runtime::Builder::basic_scheduler
@@ -181,6 +187,7 @@
 #[cfg(test)]
 #[macro_use]
 mod tests;
+pub(crate) mod context;
 
 cfg_rt_core! {
     mod basic_scheduler;
@@ -199,11 +206,6 @@ pub use self::builder::Builder;
 
 pub(crate) mod enter;
 use self::enter::enter;
-
-cfg_rt_core! {
-    mod global;
-    pub(crate) use global::spawn;
-}
 
 mod handle;
 pub use self::handle::Handle;
@@ -292,7 +294,7 @@ enum Kind {
 }
 
 /// After thread starts / before thread stops
-type Callback = ::std::sync::Arc<dyn Fn() + Send + Sync>;
+type Callback = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 impl Runtime {
     /// Create a new runtime instance with default configuration values.
@@ -303,7 +305,7 @@ impl Runtime {
     /// scheduler] is used, while if only the `rt-core` feature is enabled, the
     /// [basic scheduler] is used instead.
     ///
-    /// If the threaded cheduler is selected, it will not spawn
+    /// If the threaded scheduler is selected, it will not spawn
     /// any worker threads until it needs to, i.e. tasks are scheduled to run.
     ///
     /// Most applications will not need to call this function directly. Instead,

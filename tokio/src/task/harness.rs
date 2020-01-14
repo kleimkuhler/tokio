@@ -142,7 +142,7 @@ where
                 }
             }
             Err(err) => {
-                self.complete(executor, join_interest, Err(JoinError::panic(err)));
+                self.complete(executor, join_interest, Err(JoinError::panic2(err)));
                 false
             }
         }
@@ -192,7 +192,7 @@ where
         state: Snapshot,
     ) {
         if state.is_canceled() {
-            dst.write(Track::new(Err(JoinError::cancelled())));
+            dst.write(Track::new(Err(JoinError::cancelled2())));
         } else {
             self.core().read_output(dst);
         }
@@ -298,10 +298,6 @@ where
     pub(super) fn wake_by_val(self) {
         self.wake_by_ref();
         self.drop_waker();
-    }
-
-    pub(super) fn wake_by_local_ref(&self) {
-        self.wake_by_ref();
     }
 
     pub(super) fn wake_by_ref(&self) {

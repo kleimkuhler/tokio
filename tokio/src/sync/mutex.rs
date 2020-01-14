@@ -26,13 +26,64 @@
 //! }
 //! ```
 //!
+//! Another example
+//! ```rust,no_run
+//! #![warn(rust_2018_idioms)]
+//!
+//! use tokio::sync::Mutex;
+//! use std::sync::Arc;
+//!
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!    let count = Arc::new(Mutex::new(0));
+//!
+//!    for _ in 0..5 {
+//!        let my_count = Arc::clone(&count);
+//!        tokio::spawn(async move {
+//!            for _ in 0..10 {
+//!                let mut lock = my_count.lock().await;
+//!                *lock += 1;
+//!                println!("{}", lock);
+//!            }
+//!        });
+//!    }
+//!
+//!    loop {
+//!        if *count.lock().await >= 50 {
+//!            break;
+//!        }
+//!    }
+//!   println!("Count hit 50.");
+//! }
+//! ```
+//! There are a few things of note here to pay attention to in this example.
+//! 1. The mutex is wrapped in an [`std::sync::Arc`] to allow it to be shared across threads.
+//! 2. Each spawned task obtains a lock and releases it on every iteration.
+//! 3. Mutation of the data the Mutex is protecting is done by de-referencing the the obtained lock
+//!    as seen on lines 23 and 30.
+//!
+//! Tokio's Mutex works in a simple FIFO (first in, first out) style where as requests for a lock are
+//! made Tokio will queue them up and provide a lock when it is that requester's turn. In that way
+//! the Mutex is "fair" and predictable in how it distributes the locks to inner data. This is why
+//! the output of this program is an in-order count to 50. Locks are released and reacquired
+//! after every iteration, so basically, each thread goes to the back of the line after it increments
+//! the value once. Also, since there is only a single valid lock at any given time there is no
+//! possibility of a race condition when mutating the inner value.
+//!
+//! Note that in contrast to `std::sync::Mutex`, this implementation does not
+//! poison the mutex when a thread holding the `MutexGuard` panics. In such a
+//! case, the mutex will be unlocked. If the panic is caught, this might leave
+//! the data protected by the mutex in an inconsistent state.
+//!
 //! [`Mutex`]: struct.Mutex.html
 //! [`MutexGuard`]: struct.MutexGuard.html
 
 use crate::future::poll_fn;
-use crate::sync::semaphore;
+use crate::sync::semaphore_ll as semaphore;
 
 use std::cell::UnsafeCell;
+use std::error::Error;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
@@ -55,7 +106,6 @@ pub struct Mutex<T> {
 ///
 /// The lock is automatically released whenever the guard is dropped, at which point `lock`
 /// will succeed yet again.
-#[derive(Debug)]
 pub struct MutexGuard<'a, T> {
     lock: &'a Mutex<T>,
     permit: semaphore::Permit,
@@ -67,6 +117,22 @@ pub struct MutexGuard<'a, T> {
 unsafe impl<T> Send for Mutex<T> where T: Send {}
 unsafe impl<T> Sync for Mutex<T> where T: Send {}
 unsafe impl<'a, T> Sync for MutexGuard<'a, T> where T: Send + Sync {}
+
+/// Error returned from the [`Mutex::try_lock`] function.
+///
+/// A `try_lock` operation can only fail if the mutex is already locked.
+///
+/// [`Mutex::try_lock`]: Mutex::try_lock
+#[derive(Debug)]
+pub struct TryLockError(());
+
+impl fmt::Display for TryLockError {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "{}", "operation would block")
+    }
+}
+
+impl Error for TryLockError {}
 
 #[test]
 #[cfg(not(loom))]
@@ -86,29 +152,33 @@ impl<T> Mutex<T> {
 
     /// A future that resolves on acquiring the lock and returns the `MutexGuard`.
     pub async fn lock(&self) -> MutexGuard<'_, T> {
-        let mut permit = semaphore::Permit::new();
-        poll_fn(|cx| permit.poll_acquire(cx, &self.s))
+        let mut guard = MutexGuard {
+            lock: self,
+            permit: semaphore::Permit::new(),
+        };
+        poll_fn(|cx| guard.permit.poll_acquire(cx, 1, &self.s))
             .await
             .unwrap_or_else(|_| {
                 // The semaphore was closed. but, we never explicitly close it, and we have a
                 // handle to it through the Arc, which means that this can never happen.
                 unreachable!()
             });
+        guard
+    }
 
-        MutexGuard { lock: self, permit }
+    /// Try to acquire the lock
+    pub fn try_lock(&self) -> Result<MutexGuard<'_, T>, TryLockError> {
+        let mut permit = semaphore::Permit::new();
+        match permit.try_acquire(1, &self.s) {
+            Ok(_) => Ok(MutexGuard { lock: self, permit }),
+            Err(_) => Err(TryLockError(())),
+        }
     }
 }
 
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
-        if self.permit.is_acquired() {
-            self.permit.release(&self.lock.s);
-        } else if ::std::thread::panicking() {
-            // A guard _should_ always hold its permit, but if the thread is already panicking,
-            // we don't want to generate a panic-while-panicing, since that's just unhelpful!
-        } else {
-            unreachable!("Permit not held when MutexGuard was dropped")
-        }
+        self.permit.release(1, &self.lock.s);
     }
 }
 
@@ -139,6 +209,12 @@ impl<'a, T> DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         assert!(self.permit.is_acquired());
         unsafe { &mut *self.lock.c.get() }
+    }
+}
+
+impl<'a, T: fmt::Debug> fmt::Debug for MutexGuard<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
     }
 }
 

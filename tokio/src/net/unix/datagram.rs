@@ -46,6 +46,14 @@ impl UnixDatagram {
     ///
     /// The returned datagram will be associated with the given event loop
     /// specified by `handle` and is ready to perform I/O.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if thread-local runtime is not set.
+    ///
+    /// The runtime is usually set implicitly when this function is called
+    /// from a future driven by a tokio runtime, otherwise runtime can be set
+    /// explicitly with [`Handle::enter`](crate::runtime::Handle::enter) function.
     pub fn from_std(datagram: net::UnixDatagram) -> io::Result<UnixDatagram> {
         let socket = mio::net::UnixDatagram::from_std(datagram);
         let io = IoResource::new(socket)?;
@@ -149,10 +157,7 @@ impl UnixDatagram {
     }
 
     /// Receives data from the socket.
-    pub async fn recv_from(
-        &mut self,
-        buf: &mut [u8],
-    ) -> io::Result<(usize, mio::unix::SocketAddr)> {
+    pub async fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, mio::net::SocketAddr)> {
         poll_fn(|cx| self.poll_recv_from_priv(cx, buf)).await
     }
 
@@ -160,7 +165,7 @@ impl UnixDatagram {
         &self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<Result<(usize, mio::unix::SocketAddr), io::Error>> {
+    ) -> Poll<Result<(usize, mio::net::SocketAddr), io::Error>> {
         ready!(self.io.poll_read_ready(cx))?;
 
         match self.io.get_ref().recv_from(buf) {
@@ -173,14 +178,14 @@ impl UnixDatagram {
     }
 
     /// Returns the local address that this socket is bound to.
-    pub fn local_addr(&self) -> io::Result<mio::unix::SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<mio::net::SocketAddr> {
         self.io.get_ref().local_addr()
     }
 
     /// Returns the address of this socket's peer.
     ///
     /// The `connect` method will connect the socket to a peer.
-    pub fn peer_addr(&self) -> io::Result<mio::unix::SocketAddr> {
+    pub fn peer_addr(&self) -> io::Result<mio::net::SocketAddr> {
         self.io.get_ref().peer_addr()
     }
 

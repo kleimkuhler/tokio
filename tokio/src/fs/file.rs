@@ -1,11 +1,11 @@
 //! Types for working with [`File`].
 //!
-//! [`File`]: file/struct.File.html
+//! [`File`]: File
 
 use self::State::*;
 use crate::fs::{asyncify, sys};
 use crate::io::blocking::Buf;
-use crate::io::{AsyncRead, AsyncWrite};
+use crate::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use std::fmt;
 use std::fs::{Metadata, Permissions};
@@ -29,7 +29,7 @@ use std::task::Poll::*;
 ///
 /// Files are automatically closed when they go out of scope.
 ///
-/// [std]: https://doc.rust-lang.org/std/fs/struct.File.html
+/// [std]: std::fs::File
 ///
 /// # Examples
 ///
@@ -90,7 +90,7 @@ impl File {
     ///
     /// See [`OpenOptions`] for more details.
     ///
-    /// [`OpenOptions`]: struct.OpenOptions.html
+    /// [`OpenOptions`]: super::OpenOptions
     ///
     /// # Errors
     ///
@@ -128,14 +128,14 @@ impl File {
     ///
     /// See [`OpenOptions`] for more details.
     ///
-    /// [`OpenOptions`]: struct.OpenOptions.html
+    /// [`OpenOptions`]: super::OpenOptions
     ///
     /// # Errors
     ///
     /// Results in an error if called from outside of the Tokio runtime or if
     /// the underlying [`create`] call results in an error.
     ///
-    /// [`create`]: https://doc.rust-lang.org/std/fs/struct.File.html#method.create
+    /// [`create`]: std::fs::File::create
     ///
     /// # Examples
     ///
@@ -155,10 +155,10 @@ impl File {
         Ok(File::from_std(std_file))
     }
 
-    /// Convert a [`std::fs::File`][std] to a [`tokio_fs::File`][file].
+    /// Convert a [`std::fs::File`][std] to a [`tokio::fs::File`][file].
     ///
-    /// [std]: https://doc.rust-lang.org/std/fs/struct.File.html
-    /// [file]: struct.File.html
+    /// [std]: std::fs::File
+    /// [file]: File
     ///
     /// # Examples
     ///
@@ -399,6 +399,8 @@ impl File {
     ///
     /// Use `File::try_into_std` to attempt conversion immediately.
     ///
+    /// [std]: std::fs::File
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -416,6 +418,8 @@ impl File {
     }
 
     /// Tries to immediately destructure `File` into a [`std::fs::File`][std].
+    ///
+    /// [std]: std::fs::File
     ///
     /// # Errors
     ///
@@ -541,6 +545,76 @@ impl AsyncRead for File {
                             self.state = Idle(Some(buf));
                             continue;
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl AsyncSeek for File {
+    fn start_seek(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut pos: SeekFrom,
+    ) -> Poll<io::Result<()>> {
+        loop {
+            match self.state {
+                Idle(ref mut buf_cell) => {
+                    let mut buf = buf_cell.take().unwrap();
+
+                    // Factor in any unread data from the buf
+                    if !buf.is_empty() {
+                        let n = buf.discard_read();
+
+                        if let SeekFrom::Current(ref mut offset) = pos {
+                            *offset += n;
+                        }
+                    }
+
+                    let std = self.std.clone();
+
+                    self.state = Busy(sys::run(move || {
+                        let res = (&*std).seek(pos);
+                        (Operation::Seek(res), buf)
+                    }));
+
+                    return Ready(Ok(()));
+                }
+                Busy(ref mut rx) => {
+                    let (op, buf) = ready!(Pin::new(rx).poll(cx))?;
+                    self.state = Idle(Some(buf));
+
+                    match op {
+                        Operation::Read(_) => {}
+                        Operation::Write(Err(e)) => {
+                            assert!(self.last_write_err.is_none());
+                            self.last_write_err = Some(e.kind());
+                        }
+                        Operation::Write(_) => {}
+                        Operation::Seek(_) => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        loop {
+            match self.state {
+                Idle(_) => panic!("must call start_seek before calling poll_complete"),
+                Busy(ref mut rx) => {
+                    let (op, buf) = ready!(Pin::new(rx).poll(cx))?;
+                    self.state = Idle(Some(buf));
+
+                    match op {
+                        Operation::Read(_) => {}
+                        Operation::Write(Err(e)) => {
+                            assert!(self.last_write_err.is_none());
+                            self.last_write_err = Some(e.kind());
+                        }
+                        Operation::Write(_) => {}
+                        Operation::Seek(res) => return Ready(res),
                     }
                 }
             }
