@@ -33,7 +33,7 @@ impl Pack {
     }
 
     /// Mask used to unpack value
-    pub(crate) const fn mask(&self) -> usize {
+    pub(crate) const fn _mask(&self) -> usize {
         self.mask
     }
 

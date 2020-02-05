@@ -65,14 +65,14 @@ impl ScheduledIo {
     /// generation, then the corresponding IO resource has been removed and
     /// replaced with a new resource. In that case, this method returns `None`.
     /// Otherwise, this returns the current readiness.
-    pub(crate) fn get_readiness(&self, address: Address) -> Option<usize> {
+    pub(crate) fn _get_readiness(&self, address: Address) -> Option<usize> {
         let ready = self.readiness.load(Acquire);
 
         if unpack_generation(ready) != address.generation() {
             return None;
         }
 
-        Some(ready & !PACK.mask())
+        Some(ready & !PACK._mask())
     }
 
     /// Sets the readiness on this `ScheduledIo` by invoking the given closure on
