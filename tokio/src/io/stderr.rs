@@ -2,6 +2,10 @@ use crate::io::blocking::Blocking;
 use crate::io::AsyncWrite;
 
 use std::io;
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, RawHandle};
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -90,5 +94,19 @@ impl AsyncWrite for Stderr {
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
         Pin::new(&mut self.std).poll_shutdown(cx)
+    }
+}
+
+#[cfg(unix)]
+impl AsRawFd for Stderr {
+    fn as_raw_fd(&self) -> RawFd {
+        self.std.get_ref().as_raw_fd()
+    }
+}
+
+#[cfg(windows)]
+impl AsRawHandle for Stderr {
+    fn as_raw_handle(&self) -> RawHandle {
+        self.std.get_ref().as_raw_handle()
     }
 }

@@ -43,6 +43,10 @@ cfg_io_std! {
                 need_flush: false,
             }
         }
+
+        pub(crate) fn get_ref(&self) -> &T {
+            self.inner.as_ref().unwrap()
+        }
     }
 }
 
